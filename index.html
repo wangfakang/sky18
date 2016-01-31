@@ -1,0 +1,169 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <title>Sky18 by wangfakang</title>
+
+    <link rel="stylesheet" href="stylesheets/styles.css">
+    <link rel="stylesheet" href="stylesheets/github-light.css">
+    <script src="javascripts/scale.fix.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <!--[if lt IE 9]>
+    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+  </head>
+  <body>
+    <div class="wrapper">
+      <header>
+        <h1 class="header">Sky18</h1>
+        <p class="header">nginx optimize [相关简单的nginx长连接测试配置以及调优]</p>
+
+        <ul>
+          <li class="download"><a class="buttons" href="https://github.com/wangfakang/sky18/zipball/master">Download ZIP</a></li>
+          <li class="download"><a class="buttons" href="https://github.com/wangfakang/sky18/tarball/master">Download TAR</a></li>
+          <li><a class="buttons github" href="https://github.com/wangfakang/sky18">View On GitHub</a></li>
+        </ul>
+
+        <p class="header">This project is maintained by <a class="header name" href="https://github.com/wangfakang">wangfakang</a></p>
+
+
+      </header>
+      <section>
+        <p><code>nginx相关优化与高并发测试:</code></p>
+
+<p>前两天被问到的一个问题,下面就简单的整理下,注:nginx的相关配置优化只是部分可以自己扩充:   </p>
+
+<h1>
+<a id="1如何测试nginx百万级活跃长连接" class="anchor" href="#1%E5%A6%82%E4%BD%95%E6%B5%8B%E8%AF%95nginx%E7%99%BE%E4%B8%87%E7%BA%A7%E6%B4%BB%E8%B7%83%E9%95%BF%E8%BF%9E%E6%8E%A5" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>1.如何测试nginx百万级活跃长连接?</h1>
+
+<p>首先需要和server端保持百万级的长连接,那么就需要有百万的client,那么现在的问题就是client这么多[资源有限],
+   该如何做恩?</p>
+
+<ul>
+<li>方案一:<br>
+   要是资源足够充足,那就很好解决.----端口是16位两字节(最大表示:65535,但是0到1023之间的是不可以使用的
+  [系统预留的],那就剩下1024到65535共计:64511个,也就是一台机器可以有6万个左右client),所以100万长连接的
+  时候大概就需要16台机器.</li>
+<li>
+<p>方案二:<br>
+   可以使用docker,docker默认启动的时候使用的网络模式就是bridge,其docker产生的各个容器之间的网络资源是
+   隔离,属于自己的命名空间内部,所以可以启动16个docker就完美解决了.</p>
+
+<h2>
+<a id="注意" class="anchor" href="#%E6%B3%A8%E6%84%8F" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>注意:</h2>
+
+<ul>
+<li>1.系统默认的分配port是有限制的,在查看默认如下:
+<code>
+fakang@fakang-pc:~/wangfakang$sysctl  -a | grep  "net.ipv4.ip_local_port_range"
+net.ipv4.ip_local_port_range = 32768    61000
+所以要进行重新设置.
+</code>
+</li>
+<li>
+<p>2.client需要打开很多的文件描述符,所以应该设置当前系统能打开最大文件描述个数.</p>
+
+<pre><code>通过:fakang@fakang-pc:~/wangfakang/ctest$ ulimit -n
+     1024
+默认是只运行打开1024个文件描述符.
+方法1:ulimit Cn 1000000   //重启设置失效
+方法2:在/etc/security/limits.conf 最后增加：
+
+    soft nofile 1000000  //硬设置
+    hard nofile 1000000  //软设置
+</code></pre>
+</li>
+</ul>
+</li>
+</ul>
+
+<h1>
+<a id="2nginx的高并发的相关优化" class="anchor" href="#2nginx%E7%9A%84%E9%AB%98%E5%B9%B6%E5%8F%91%E7%9A%84%E7%9B%B8%E5%85%B3%E4%BC%98%E5%8C%96" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>2.nginx的高并发的相关优化?</h1>
+
+<p>nginx做高并发的时候可以从以下几方面做优化:</p>
+
+<ul>
+<li>
+<p>1.tcp层面上的参数设置:</p>
+
+<pre><code>  通常tcp相关的设置文件位于:  /etc/sysctl.conf
+    ```
+    net.ipv4.tcp_timestamps = 0      //此参数和tcp_tw_recycle参数同时打开会激活这种现象[可以缓存每个连接最新的时间戳，
+    后续请求中如果时间戳小于缓存的时间戳，即视为无效，相应的数据包会被丢弃。]此种现象会大致在使用LVS(NAT模式下)的时候会造成
+    client明明发送了SYN包但是就收不到server端的ACK,被丢弃了. 一般会造成nginx出现504错误.
+    net.ipv4.tcp_synack_retries = 1  //ack包重试次数
+    net.ipv4.tcp_syn_retries = 1     //syn包重试次数
+    net.ipv4.tcp_tw_recycle = 1 
+    net.ipv4.tcp_tw_reuse = 1        //运行socket fd处于time_wait进行使用.
+    net.ipv4.tcp_mem = 94500000 915000000 927000000
+    net.ipv4.tcp_fin_timeout = 1     //TCP保持在FIN_WAIT_2状态的时间.
+    net.ipv4.tcp_keepalive_time = 30 //尝试验证空闲连接是否完好的频率.
+    net.ipv4.ip_local_port_range = 1024 65000   //根据需求设置本地允许打开使用的port范围.
+  ```
+ 最后设置好了,可以通过: /sbin/sysctl -p  命令进行生效.    
+</code></pre>
+</li>
+</ul>
+
+<ul>
+<li>
+<p>2.nginx相关配置参数设置:</p>
+
+<pre><code>    最好使用epoll.
+    worker  当前nginx启动的worker个数.
+    worker_connections 每个worker处理的最大连接数.
+
+    upstream中可以设置: keepalive_timeout keepalive参数.
+    等等
+
+</code></pre>
+</li>
+</ul>
+
+<h1>
+<a id="communite--" class="anchor" href="#communite--" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Communite  </h1>
+
+<p>在使用中有任何问题，欢迎反馈给我，可以用以下联系方式跟我交流</p>
+
+<ul>
+<li>邮件(1031379296#qq.com, 把#换成@)</li>
+<li>QQ: 1031379296</li>
+<li>weibo: <a href="http://weibo.com/fakangwang">@王发康</a>
+</li>
+</ul>
+
+<h1>
+<a id="thx" class="anchor" href="#thx" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Thx</h1>
+
+<ul>
+<li>chunshengsterATgmail.com</li>
+</ul>
+
+<h1>
+<a id="author" class="anchor" href="#author" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Author</h1>
+
+<ul>
+<li>Linux\nginx\golang\c\c++爱好者</li>
+<li>欢迎一起交流  一起学习# </li>
+<li>Others say good and Others good</li>
+</ul>
+      </section>
+      <footer>
+        <p><small>Hosted on <a href="https://pages.github.com">GitHub Pages</a> using the Dinky theme</small></p>
+      </footer>
+    </div>
+    <!--[if !IE]><script>fixScale(document);</script><![endif]-->
+		          <script type="text/javascript">
+            var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
+            document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
+          </script>
+          <script type="text/javascript">
+            try {
+              var pageTracker = _gat._getTracker("nginx optimize [相关简单的nginx长连接测试配置以及调优]");
+            pageTracker._trackPageview();
+            } catch(err) {}
+          </script>
+
+  </body>
+</html>
