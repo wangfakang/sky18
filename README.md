@@ -1,2 +1,2 @@
 # sky18
-nginx optimize [相关简单的nginx长连接测试配置以及调优]
+[Nginx如何进行长连接测试以及相关简单优化](http://wangfakang.github.io/sky18)
